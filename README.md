@@ -94,6 +94,14 @@ vod:
       width: 640 # px
       height: 360 # px
       bitrate: 800 # kbps
+      # Optional ffmpeg overrides
+      encoder: libx264   # video encoder (e.g. libx264, h264_nvenc)
+      preset: faster    # default "faster"
+      profile: high     # default "high"
+      level: "4.0"      # default "4.0"
+      extra-args:
+        - "-x264opts"
+        - "keyint=48:min-keyint=48"
     540p:
       width: 960
       height: 540

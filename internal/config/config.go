@@ -47,6 +47,13 @@ type VideoProfile struct {
 	Width   int `mapstructure:"width"`
 	Height  int `mapstructure:"height"`
 	Bitrate int `mapstructure:"bitrate"` // in kilobytes
+
+	// Optional FFmpeg overrides
+	Encoder   string   `mapstructure:"encoder"`
+	Preset    string   `mapstructure:"preset"`
+	Profile   string   `mapstructure:"profile"`
+	Level     string   `mapstructure:"level"`
+	ExtraArgs []string `mapstructure:"extra-args"`
 }
 
 type AudioProfile struct {
@@ -211,7 +218,7 @@ func (s *Server) Set() {
 	s.Vod.SegmentBufferMin = viper.GetInt("vod.segment-buffer-min")
 	s.Vod.SegmentBufferMax = viper.GetInt("vod.segment-buffer-max")
 
-	// defaults
+	// defaults (HLS-VOD segment)
 
 	if s.Vod.SegmentLength == 0 {
 		s.Vod.SegmentLength = 4
@@ -256,6 +263,23 @@ func (s *Server) Set() {
 
 	if s.Vod.FFprobeBinary == "" {
 		s.Vod.FFprobeBinary = "ffprobe"
+	}
+
+	// apply defaults to each video profile
+	for k, vp := range s.Vod.VideoProfiles {
+		if vp.Encoder == "" {
+			vp.Encoder = "libx264"
+		}
+		if vp.Preset == "" {
+			vp.Preset = "faster"
+		}
+		if vp.Profile == "" {
+			vp.Profile = "high"
+		}
+		if vp.Level == "" {
+			vp.Level = "4.0"
+		}
+		s.Vod.VideoProfiles[k] = vp
 	}
 
 	//

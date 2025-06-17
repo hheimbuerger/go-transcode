@@ -26,6 +26,13 @@ type VideoProfile struct {
 	Width   int
 	Height  int
 	Bitrate int // in kilobytes
+
+	// Optional FFmpeg overrides
+	Encoder   string
+	Preset    string
+	Profile   string
+	Level     string
+	ExtraArgs []string
 }
 
 type AudioProfile struct {
@@ -89,14 +96,37 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 			scale = fmt.Sprintf("scale=%d:-2", profile.Width)
 		}
 
+		// apply defaults if empty
+		encoder := profile.Encoder
+		if encoder == "" {
+			encoder = "libx264"
+		}
+		preset := profile.Preset
+		if preset == "" {
+			preset = "faster"
+		}
+		prof := profile.Profile
+		if prof == "" {
+			prof = "high"
+		}
+		lvl := profile.Level
+		if lvl == "" {
+			lvl = "4.0"
+		}
+
 		args = append(args, []string{
 			"-vf", scale,
-			"-c:v", "libx264",
-			"-preset", "faster",
-			"-profile:v", "high",
-			"-level:v", "4.0",
+			"-c:v", encoder,
+			"-preset", preset,
+			"-profile:v", prof,
+			"-level:v", lvl,
 			"-b:v", fmt.Sprintf("%dk", profile.Bitrate),
 		}...)
+
+		// extra args
+		if len(profile.ExtraArgs) > 0 {
+			args = append(args, profile.ExtraArgs...)
+		}
 	}
 
 	// Audio specs
