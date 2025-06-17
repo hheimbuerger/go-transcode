@@ -61,8 +61,15 @@ type VOD struct {
 	AudioProfile   AudioProfile            `mapstructure:"audio-profile"`
 	Cache          bool                    `mapstructure:"cache"`
 	CacheDir       string                  `mapstructure:"cache-dir"`
-	FFmpegBinary   string                  `mapstructure:"ffmpeg-binary"`
-	FFprobeBinary  string                  `mapstructure:"ffprobe-binary"`
+
+	// HLS-VOD segment parameters
+	SegmentLength    float64 `mapstructure:"segment-length"`
+	SegmentOffset    float64 `mapstructure:"segment-offset"`
+	SegmentBufferMin int     `mapstructure:"segment-buffer-min"`
+	SegmentBufferMax int     `mapstructure:"segment-buffer-max"`
+
+	FFmpegBinary  string `mapstructure:"ffmpeg-binary"`
+	FFprobeBinary string `mapstructure:"ffprobe-binary"`
 }
 
 type Enigma2 struct {
@@ -142,6 +149,27 @@ func (Server) Init(cmd *cobra.Command) error {
 		return err
 	}
 
+	// HLS-VOD segment flags
+	cmd.PersistentFlags().Float64("vod-segment-length", 4, "HLS-VOD segment length in seconds")
+	if err := viper.BindPFlag("vod.segment-length", cmd.PersistentFlags().Lookup("vod-segment-length")); err != nil {
+		return err
+	}
+
+	cmd.PersistentFlags().Float64("vod-segment-offset", 1, "HLS-VOD allowed deviation from segment length in seconds")
+	if err := viper.BindPFlag("vod.segment-offset", cmd.PersistentFlags().Lookup("vod-segment-offset")); err != nil {
+		return err
+	}
+
+	cmd.PersistentFlags().Int("vod-segment-buffer-min", 3, "HLS-VOD minimum number of future segments maintained")
+	if err := viper.BindPFlag("vod.segment-buffer-min", cmd.PersistentFlags().Lookup("vod-segment-buffer-min")); err != nil {
+		return err
+	}
+
+	cmd.PersistentFlags().Int("vod-segment-buffer-max", 5, "HLS-VOD maximum number of segments transcoded in a batch")
+	if err := viper.BindPFlag("vod.segment-buffer-max", cmd.PersistentFlags().Lookup("vod-segment-buffer-max")); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -177,7 +205,26 @@ func (s *Server) Set() {
 		panic(err)
 	}
 
+	// segment parameters populated from viper
+	s.Vod.SegmentLength = viper.GetFloat64("vod.segment-length")
+	s.Vod.SegmentOffset = viper.GetFloat64("vod.segment-offset")
+	s.Vod.SegmentBufferMin = viper.GetInt("vod.segment-buffer-min")
+	s.Vod.SegmentBufferMax = viper.GetInt("vod.segment-buffer-max")
+
 	// defaults
+
+	if s.Vod.SegmentLength == 0 {
+		s.Vod.SegmentLength = 4
+	}
+	if s.Vod.SegmentOffset == 0 {
+		s.Vod.SegmentOffset = 1
+	}
+	if s.Vod.SegmentBufferMin == 0 {
+		s.Vod.SegmentBufferMin = 3
+	}
+	if s.Vod.SegmentBufferMax == 0 {
+		s.Vod.SegmentBufferMax = 5
+	}
 
 	if s.Vod.TranscodeDir == "" {
 		var err error
