@@ -28,7 +28,7 @@ type VideoProfile struct {
 	Bitrate int // in kilobytes
 
 	// Optional FFmpeg overrides
-	Encoder   string
+	Codec     string
 	Preset    string
 	Profile   string
 	Level     string
@@ -97,9 +97,9 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 		}
 
 		// apply defaults if empty
-		encoder := profile.Encoder
-		if encoder == "" {
-			encoder = "libx264"
+		codec := profile.Codec
+		if codec == "" {
+			codec = "libx264"
 		}
 		preset := profile.Preset
 		if preset == "" {
@@ -116,7 +116,7 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 
 		args = append(args, []string{
 			"-vf", scale,
-			"-c:v", encoder,
+			"-c:v", codec,
 			"-preset", preset,
 			"-profile:v", prof,
 			"-level:v", lvl,

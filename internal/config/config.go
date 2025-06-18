@@ -49,7 +49,7 @@ type VideoProfile struct {
 	Bitrate int `mapstructure:"bitrate"` // in kilobytes
 
 	// Optional FFmpeg overrides
-	Encoder   string   `mapstructure:"encoder"`
+	Codec     string   `mapstructure:"codec"`
 	Preset    string   `mapstructure:"preset"`
 	Profile   string   `mapstructure:"profile"`
 	Level     string   `mapstructure:"level"`
@@ -267,8 +267,8 @@ func (s *Server) Set() {
 
 	// apply defaults to each video profile
 	for k, vp := range s.Vod.VideoProfiles {
-		if vp.Encoder == "" {
-			vp.Encoder = "libx264"
+		if vp.Codec == "" {
+			vp.Codec = "libx264"
 		}
 		if vp.Preset == "" {
 			vp.Preset = "faster"

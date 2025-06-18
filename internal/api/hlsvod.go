@@ -147,7 +147,7 @@ func (a *ApiManagerCtx) HlsVod(r chi.Router) {
 					Width:   profile.Width,
 					Height:  profile.Height,
 					Bitrate: profile.Bitrate,
-					Encoder: profile.Encoder,
+					Codec:   profile.Codec,
 					Preset:  profile.Preset,
 					Profile: profile.Profile,
 					Level:   profile.Level,
