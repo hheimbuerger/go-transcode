@@ -125,7 +125,16 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 
 		// extra args
 		if len(profile.ExtraArgs) > 0 {
-			args = append(args, profile.ExtraArgs...)
+			extraArgs := make([]string, 0, len(profile.ExtraArgs))
+			for _, arg := range profile.ExtraArgs {
+				// Split combined args like "-tune:v=ull" into "-tune:v", "ull"
+				if strings.Contains(arg, "=") {
+					extraArgs = append(extraArgs, strings.SplitN(arg, "=", 2)...)
+				} else {
+					extraArgs = append(extraArgs, arg)
+				}
+			}
+			args = append(args, extraArgs...)
 		}
 	}
 

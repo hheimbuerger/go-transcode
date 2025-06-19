@@ -94,16 +94,15 @@ vod:
       width: 640 # px
       height: 360 # px
       bitrate: 800 # kbps
-      # Optional ffmpeg overrides
+      # Optional ffmpeg video overrides
       codec: h264_nvenc   # default "libx264"
       preset: p1          # default "faster"
       profile: high       # default "high"
       level: auto         # default "4.0"
-      extra-args:
-        - "-tune:v"
-        - "ull"
-        - "-rc:v"
-        - "cbr"
+      extra-args:         # optionally, additional ffmpeg video encoder arguments
+        - "-tune:v=ull"   # can be passed either as combined args, and will be split
+        - "-rc:v"         # or parameter ...
+        - "cbr"           # ... and value on separate lines
     540p:
       width: 960
       height: 540
