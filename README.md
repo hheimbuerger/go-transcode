@@ -126,7 +126,8 @@ vod:
   video-keyframes: false
   # Single audio profile used
   audio-profile:
-    bitrate: 192 # kbps
+    codec: aac    # default "aac", but "copy" is an alternative
+    bitrate: 192  # kbps
   # If cache is enabled
   cache: true
   # If dir is empty, cache will be stored in the same directory as media source

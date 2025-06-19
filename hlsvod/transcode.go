@@ -36,7 +36,8 @@ type VideoProfile struct {
 }
 
 type AudioProfile struct {
-	Bitrate int // in kilobytes
+	Codec   string // audio codec (e.g., "aac", "copy", "libopus")
+	Bitrate int    // in kilobytes (0 means use codec default)
 }
 
 // returns a channel, that delivers name of the segments as they are encoded
@@ -141,11 +142,12 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 	// Audio specs
 	if config.AudioProfile != nil {
 		profile := config.AudioProfile
-
-		args = append(args, []string{
-			"-c:a", "aac",
-			"-b:a", fmt.Sprintf("%dk", profile.Bitrate),
-		}...)
+		if profile.Codec != "" {
+			args = append(args, "-c:a", profile.Codec)
+			if profile.Bitrate > 0 {
+				args = append(args, "-b:a", fmt.Sprintf("%dk", profile.Bitrate))
+			}
+		}
 	}
 
 	// Segmenting specs
