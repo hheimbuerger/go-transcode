@@ -18,6 +18,10 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// transcodeSegmentsFn is a package-level hook so tests can stub out the actual
+// FFmpeg-based implementation. In production it points to TranscodeSegments.
+var transcodeSegmentsFn = TranscodeSegments
+
 type ManagerCtx struct {
 	mu     sync.Mutex
 	logger zerolog.Logger
@@ -395,7 +399,7 @@ func (m *ManagerCtx) transcodeSegments(offset, limit int) error {
 	segmentTimes := m.breakpoints[offset : offset+limit+1]
 	logger.Info().Interface("segments-times", segmentTimes).Msg("transcoding segments")
 
-	segments, err := TranscodeSegments(m.ctx, m.config.FFmpegBinary, TranscodeConfig{
+	segments, err := transcodeSegmentsFn(m.ctx, m.config.FFmpegBinary, TranscodeConfig{
 		InputFilePath: m.config.MediaPath,
 		OutputDirPath: m.config.TranscodeDir,
 		SegmentPrefix: m.config.SegmentPrefix, // This does not need to match.
