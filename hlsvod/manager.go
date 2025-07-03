@@ -565,6 +565,17 @@ func (m *ManagerCtx) ServePlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
+	// Log new request with cache status
+	cacheStatus := "miss"
+	if m.isSegmentTranscoded(0) { // Check if first segment is already transcoded as a proxy for cache status
+		cacheStatus = "hit"
+	}
+	m.logger.Info().
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Str("segment_cache", cacheStatus).
+		Msg("serving HLS media segment")
+
 	// ensure that manager started
 	if !m.httpEnsureReady(w) {
 		return
