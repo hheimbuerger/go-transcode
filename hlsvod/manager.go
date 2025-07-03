@@ -48,6 +48,10 @@ type ManagerCtx struct {
 	segmentQueue   map[int]chan struct{} // map of segments and signaling channel for finished transcoding
 	segmentQueueMu sync.RWMutex
 
+	monitor      *Monitor // tracks segment status during transcoding
+	monitorSub   <-chan SegmentStatusUpdate
+	monitorClose func()
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -67,14 +71,17 @@ func New(config Config) *ManagerCtx {
 		config.SegmentBufferMax = 5
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	logger := log.With().Str("module", "hlsvod").Str("submodule", "manager").Logger()
 	return &ManagerCtx{
-		logger: log.With().Str("module", "hlsvod").Str("submodule", "manager").Logger(),
+		logger: logger,
 		config: config,
 
 		segmentLength:    config.SegmentLength,
 		segmentOffset:    config.SegmentOffset,
 		segmentBufferMin: config.SegmentBufferMin,
 		segmentBufferMax: config.SegmentBufferMax,
+
+		monitor: NewMonitor(logger),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -280,6 +287,9 @@ func (m *ManagerCtx) initialize() {
 		m.segments[i] = ""
 	}
 
+	// Initialize segment status tracking
+	m.monitor.InitializeSegmentStatus(len(m.breakpoints))
+
 	// prepare segment queue map
 	m.segmentQueue = map[int]chan struct{}{}
 
@@ -342,6 +352,9 @@ func (m *ManagerCtx) clearAllSegments() {
 			m.logger.Err(err).Str("path", segmentPath).Msg("error while removing file")
 		}
 	}
+
+	// Reset all segment statuses to New
+	m.monitor.SetSegmentStatusRange(0, len(m.segments), SegmentStatusNew)
 }
 
 //
@@ -352,7 +365,7 @@ func (m *ManagerCtx) enqueueSegments(offset, limit int) {
 	m.segmentQueueMu.Lock()
 	defer m.segmentQueueMu.Unlock()
 
-	// create new segment signaling channels queue
+	// create new segment signaling channels
 	for i := offset; i < offset+limit; i++ {
 		m.segmentQueue[i] = make(chan struct{}, 1)
 	}
@@ -395,6 +408,14 @@ func (m *ManagerCtx) transcodeSegments(offset, limit int) error {
 	segmentTimes := m.breakpoints[offset : offset+limit+1]
 	logger.Info().Interface("segments-times", segmentTimes).Msg("transcoding segments")
 
+	// Initialize all segments in this batch as queued
+	m.monitor.SetSegmentStatusRange(offset, offset+limit, SegmentStatusQueued)
+
+	// mark first segment as transcoding
+	if limit > 0 {
+		m.monitor.SetSegmentStatus(offset, SegmentStatusTranscoding)
+	}
+
 	segments, err := TranscodeSegments(m.ctx, m.config.FFmpegBinary, TranscodeConfig{
 		InputFilePath: m.config.MediaPath,
 		OutputDirPath: m.config.TranscodeDir,
@@ -408,7 +429,9 @@ func (m *ManagerCtx) transcodeSegments(offset, limit int) error {
 	})
 
 	if err != nil {
-		logger.Err(err).Msg("error occured while starting to transcode segment")
+		logger.Err(err).Msg("error occurred while starting to transcode segment")
+		// Mark all segments in this batch as errored
+		m.monitor.SetSegmentStatusRange(offset, offset+limit, SegmentStatusError)
 		return err
 	}
 
@@ -446,17 +469,28 @@ func (m *ManagerCtx) transcodeSegments(offset, limit int) error {
 			// add transcoded segment name
 			m.addSegment(index, segmentName)
 
+			// Mark current segment as completed
+			m.monitor.SetSegmentStatus(index, SegmentStatusCompleted)
+
 			// notify and drop from queue, if exists
 			m.dequeueSegment(index)
 
 			// expect new segment to come
 			index++
+
+			// Mark next segment as transcoding if there is one in this batch
+			if index < offset+limit {
+				m.monitor.SetSegmentStatus(index, SegmentStatusTranscoding)
+			}
 		}
 
 		// check if all segments were transcoded
 		if index < offset+limit {
 			// clear segments queue if not all segments were transcoded
 			m.dequeueSegments(offset, limit)
+
+			// Mark remaining segments as error
+			m.monitor.SetSegmentStatusRange(index, offset+limit, SegmentStatusError)
 
 			logger.Warn().Msg("transcode process finished, but not all segments were transcoded")
 		} else {
@@ -528,11 +562,49 @@ func (m *ManagerCtx) Start() (err error) {
 		// initialization based on metadata
 		m.initialize()
 
+		// Set up monitor subscription for logging
+		m.monitorSub = m.monitor.Subscribe()
+		m.monitorClose = func() {
+			m.monitor.Close()
+		}
+
+		// Start the monitor subscriber in a goroutine
+		go m.monitorSegments()
+
 		// set ready state as done
 		m.readyDone()
 	}()
 
 	return nil
+}
+
+// monitorSegments handles segment status updates and logs them when verbose is enabled
+func (m *ManagerCtx) monitorSegments() {
+	const logInterval = 2 * time.Second
+	lastLogTime := time.Now()
+
+	for update := range m.monitorSub {
+		now := time.Now()
+
+		// Only log if verbose is enabled and enough time has passed or if there's an error
+		if now.Sub(lastLogTime) >= logInterval || update.NewStatus == SegmentStatusError {
+			completed, inProgress, queued, errored, _ := m.monitor.GetSegmentCounts(len(m.breakpoints))
+			segmentMap := m.monitor.GetSegmentMap(len(m.breakpoints))
+
+			m.logger.Info().
+				Str("segments", segmentMap).
+				Int("done", completed).
+				Int("in_progress", inProgress).
+				Int("queued", queued).
+				Int("errored", errored).
+				Int("segment_id", update.SegmentID).
+				Str("old_status", update.OldStatus.String()).
+				Str("new_status", update.NewStatus.String()).
+				Msg("segment status updated")
+
+			lastLogTime = now
+		}
+	}
 }
 
 func (m *ManagerCtx) Stop() {
@@ -542,7 +614,7 @@ func (m *ManagerCtx) Stop() {
 	// cancel current context
 	m.cancel()
 
-	// remove all transcoded segments
+	// remove all transcoded segments and reset their status
 	m.clearAllSegments()
 }
 
