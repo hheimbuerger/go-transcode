@@ -205,21 +205,30 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(2)
+	// We have 3 goroutines to wait for: stdout, stderr, and cmd.Wait()
+	wg.Add(3)
 
 	segments := make(chan string, 1)
 
+	// Start a goroutine to close the segments channel when all processing is done
+	go func() {
+		// Wait for both stdout and stderr goroutines to finish
+		wg.Wait()
+		close(segments)
+	}()
+
 	// handle stdout
 	go func() {
-		defer func() {
-			wg.Wait()
-
-			close(segments)
-		}()
+		defer wg.Done()
 
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			segments <- scanner.Text()
+			select {
+			case segments <- scanner.Text():
+				// Message sent successfully
+			case <-ctx.Done():
+				return
+			}
 		}
 
 		if err := scanner.Err(); err != nil {
@@ -242,9 +251,13 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 	}()
 
 	// start execution
-	err = cmd.Start()
+	if err := cmd.Start(); err != nil {
+		wg.Done() // Cancel one of the waits since we're not starting the process
+		close(segments)
+		return nil, fmt.Errorf("failed to start FFmpeg: %w", err)
+	}
 
-	// wait until execution finishes
+	// wait until execution finishes in the background
 	go func() {
 		defer wg.Done()
 
