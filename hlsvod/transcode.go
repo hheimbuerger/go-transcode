@@ -28,7 +28,7 @@ type VideoProfile struct {
 	Bitrate int // in kilobytes
 
 	// Optional FFmpeg overrides
-	Codec     string
+	Encoder   string
 	Preset    string
 	Profile   string
 	Level     string
@@ -36,8 +36,8 @@ type VideoProfile struct {
 }
 
 type AudioProfile struct {
-	Codec   string // audio codec (e.g., "aac", "copy", "libopus")
-	Bitrate int    // in kilobytes (0 means use codec default)
+	Encoder string // audio encoder (e.g., "aac", "copy", "libopus")
+	Bitrate int    // in kilobytes (0 means use encoder default)
 }
 
 // returns a channel, that delivers name of the segments as they are encoded
@@ -98,9 +98,9 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 		}
 
 		// apply defaults if empty
-		codec := profile.Codec
-		if codec == "" {
-			codec = "libx264"
+		encoder := profile.Encoder
+		if encoder == "" {
+			encoder = "libx264"
 		}
 		preset := profile.Preset
 		if preset == "" {
@@ -117,7 +117,7 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 
 		args = append(args, []string{
 			"-vf", scale,
-			"-c:v", codec,
+			"-c:v", encoder,
 			"-preset", preset,
 			"-profile:v", prof,
 			"-level:v", lvl,
@@ -142,8 +142,8 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 	// Audio specs
 	if config.AudioProfile != nil {
 		profile := config.AudioProfile
-		if profile.Codec != "" {
-			args = append(args, "-c:a", profile.Codec)
+		if profile.Encoder != "" {
+			args = append(args, "-c:a", profile.Encoder)
 			if profile.Bitrate > 0 {
 				args = append(args, "-b:a", fmt.Sprintf("%dk", profile.Bitrate))
 			}

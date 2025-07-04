@@ -111,7 +111,7 @@ vod:
       height: 1080
       bitrate: 5000
       # Optional ffmpeg video overrides
-      codec: h264_nvenc   # default "libx264"
+      encoder: h264_nvenc   # default "libx264"
       preset: p1          # default "faster"
       profile: high       # default "high"
       level: auto         # default "4.0"
@@ -131,7 +131,7 @@ vod:
   video-keyframes: false
   # Single audio profile used
   audio-profile:
-    codec: aac    # default "aac", but "copy" is an alternative
+    encoder: aac    # default "aac", but "copy" is an alternative
     bitrate: 192  # kbps
   # If cache is enabled
   cache: true
