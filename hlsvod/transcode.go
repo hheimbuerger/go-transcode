@@ -28,16 +28,18 @@ type VideoProfile struct {
 	Bitrate int // in kilobytes
 
 	// Optional FFmpeg overrides
-	Encoder   string
-	Preset    string
-	Profile   string
-	Level     string
-	ExtraArgs []string
+	Encoder     string
+	Preset      string
+	Profile     string
+	Level       string
+	ExtraArgs   []string
+	FilterGraph []string
 }
 
 type AudioProfile struct {
-	Encoder string // audio encoder (e.g., "aac", "copy", "libopus")
-	Bitrate int    // in kilobytes (0 means use encoder default)
+	Encoder     string   // audio encoder (e.g., "aac", "copy", "libopus")
+	Bitrate     int      // in kilobytes (0 means use encoder default)
+	FilterGraph []string // optional audio filtergraph chains
 }
 
 // returns a channel, that delivers name of the segments as they are encoded
@@ -86,16 +88,44 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 		"-sn", // No subtitles
 	}...)
 
-	// Video specs
+	// Filtergraph (scaling + optional user graph)
 	if config.VideoProfile != nil {
 		profile := config.VideoProfile
 
-		var scale string
+		// Build scale expression producing [vin] source pad
+		var scaleExpr string
 		if profile.Width >= profile.Height {
-			scale = fmt.Sprintf("scale=-2:%d", profile.Height)
+			scaleExpr = fmt.Sprintf("[0:v]scale=-2:%d[vin]", profile.Height)
 		} else {
-			scale = fmt.Sprintf("scale=%d:-2", profile.Width)
+			scaleExpr = fmt.Sprintf("[0:v]scale=%d:-2[vin]", profile.Width)
 		}
+
+		// Source audio pad
+		audioIn := "[0:a]anull[ain]"
+
+		graphParts := []string{scaleExpr, audioIn}
+
+		// Video filters
+		if len(profile.FilterGraph) > 0 {
+			graphParts = append(graphParts, profile.FilterGraph...)
+		} else {
+			graphParts = append(graphParts, "[vin]null[vout]")
+		}
+		// Audio filters
+		if config.AudioProfile != nil && len(config.AudioProfile.FilterGraph) > 0 {
+			graphParts = append(graphParts, config.AudioProfile.FilterGraph...)
+		} else {
+			graphParts = append(graphParts, "[ain]anull[aout]")
+		}
+		combinedFG := strings.Join(graphParts, ";")
+		// Add filter graph and explicit stream mapping (video & audio)
+		args = append(args, "-filter_complex", combinedFG)
+		args = append(args, "-map", "[vout]", "-map", "[aout]?")
+	}
+
+	// Video specs
+	if config.VideoProfile != nil {
+		profile := config.VideoProfile
 
 		// apply defaults if empty
 		encoder := profile.Encoder
@@ -116,7 +146,6 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 		}
 
 		args = append(args, []string{
-			"-vf", scale,
 			"-c:v", encoder,
 			"-preset", preset,
 			"-profile:v", prof,

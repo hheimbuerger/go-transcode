@@ -54,11 +54,13 @@ type VideoProfile struct {
 	Profile   string   `mapstructure:"profile"`
 	Level     string   `mapstructure:"level"`
 	ExtraArgs []string `mapstructure:"extra-args"`
+	FilterGraph []string `mapstructure:"filtergraph"`
 }
 
 type AudioProfile struct {
-	Encoder string `mapstructure:"encoder"`
-	Bitrate int    `mapstructure:"bitrate"` // in kilobytes
+	Encoder string   `mapstructure:"encoder"`
+	Bitrate int      `mapstructure:"bitrate"` // in kilobytes
+	FilterGraph []string `mapstructure:"filtergraph"`
 }
 
 type VOD struct {
