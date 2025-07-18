@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os/exec"
 	"path"
 	"strings"
 	"sync"
+
+	"github.com/rs/zerolog/log"
+
+	"github.com/m1k1o/go-transcode/internal/utils"
 )
 
 type TranscodeConfig struct {
@@ -192,16 +195,18 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 	}...)
 
 	cmd := exec.CommandContext(ctx, ffmpegBinary, args...)
-	log.Println("Starting FFmpeg process with args", strings.Join(cmd.Args[:], " "))
+	log.Info().
+		Str("command", ffmpegBinary).
+		Strs("args", args).
+		Msg("starting FFmpeg process")
+
+	// Redirect stderr through our logger
+	logger := log.With().Str("module", "ffmpeg").Logger()
+	cmd.Stderr = utils.LogWriter(logger)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	wg := sync.WaitGroup{}
@@ -213,7 +218,6 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 	go func() {
 		defer func() {
 			wg.Wait()
-
 			close(segments)
 		}()
 
@@ -223,21 +227,7 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 		}
 
 		if err := scanner.Err(); err != nil {
-			log.Println("Error while reading FFmpeg stdout:", err)
-		}
-	}()
-
-	// handle stderr
-	go func() {
-		defer wg.Done()
-
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			log.Println(scanner.Text())
-		}
-
-		if err := scanner.Err(); err != nil {
-			log.Println("Error while reading FFmpeg stderr:", err)
+			log.Error().Err(err).Msg("error reading FFmpeg stdout")
 		}
 	}()
 
@@ -250,9 +240,9 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 
 		err := cmd.Wait()
 		if err != nil {
-			log.Println("FFmpeg process exited with error:", err)
+			log.Error().Err(err).Msg("FFmpeg process exited with error")
 		} else {
-			log.Println("FFmpeg process successfully finished.")
+			log.Info().Msg("FFmpeg process completed successfully")
 		}
 	}()
 
