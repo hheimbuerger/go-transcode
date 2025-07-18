@@ -76,6 +76,9 @@ type VOD struct {
 	SegmentBufferMin int     `mapstructure:"segment-buffer-min"`
 	SegmentBufferMax int     `mapstructure:"segment-buffer-max"`
 
+    ReadyTimeout      int `mapstructure:"ready-timeout"`
+    TranscodeTimeout  int `mapstructure:"transcode-timeout"`
+
 	FFmpegBinary  string `mapstructure:"ffmpeg-binary"`
 	FFprobeBinary string `mapstructure:"ffprobe-binary"`
 }
@@ -174,6 +177,19 @@ func (Server) Init(cmd *cobra.Command) error {
 	}
 
 	cmd.PersistentFlags().Int("vod-segment-buffer-max", 5, "HLS-VOD maximum number of segments transcoded in a batch")
+    if err := viper.BindPFlag("vod.segment-buffer-max", cmd.PersistentFlags().Lookup("vod-segment-buffer-max")); err != nil {
+        return err
+    }
+
+    // VOD timeouts
+    cmd.PersistentFlags().Int("vod-ready-timeout", 80, "HLS-VOD timeout (seconds) for manager to become ready")
+    if err := viper.BindPFlag("vod.ready-timeout", cmd.PersistentFlags().Lookup("vod-ready-timeout")); err != nil {
+        return err
+    }
+    cmd.PersistentFlags().Int("vod-transcode-timeout", 10, "HLS-VOD timeout (seconds) for a segment to transcode")
+    if err := viper.BindPFlag("vod.transcode-timeout", cmd.PersistentFlags().Lookup("vod-transcode-timeout")); err != nil {
+        return err
+    }
 	if err := viper.BindPFlag("vod.segment-buffer-max", cmd.PersistentFlags().Lookup("vod-segment-buffer-max")); err != nil {
 		return err
 	}
@@ -218,6 +234,8 @@ func (s *Server) Set() {
 	s.Vod.SegmentOffset = viper.GetFloat64("vod.segment-offset")
 	s.Vod.SegmentBufferMin = viper.GetInt("vod.segment-buffer-min")
 	s.Vod.SegmentBufferMax = viper.GetInt("vod.segment-buffer-max")
+    s.Vod.ReadyTimeout = viper.GetInt("vod.ready-timeout")
+    s.Vod.TranscodeTimeout = viper.GetInt("vod.transcode-timeout")
 
 	// defaults (HLS-VOD segment)
 
@@ -233,6 +251,13 @@ func (s *Server) Set() {
 	if s.Vod.SegmentBufferMax == 0 {
 		s.Vod.SegmentBufferMax = 5
 	}
+
+	if s.Vod.ReadyTimeout == 0 {
+        s.Vod.ReadyTimeout = 80
+    }
+    if s.Vod.TranscodeTimeout == 0 {
+        s.Vod.TranscodeTimeout = 10
+    }
 
 	if s.Vod.TranscodeDir == "" {
 		var err error

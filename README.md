@@ -119,11 +119,16 @@ vod:
         - "-tune:v=ull"   # can be passed either as combined args, and will be split
         - "-rc:v"         # or parameter ...
         - "cbr"           # ... and value on separate lines
+
   # HLS-VOD segment behaviour (optional)
   segment-length: 4        # nominal segment length in seconds
   segment-offset: 1        # allowed +/- tolerance in seconds
   segment-buffer-min: 3    # min segments ahead of playhead
   segment-buffer-max: 5    # max segments transcoded at once
+
+  # Timeout reconfiguration (optional)
+  ready-timeout: 80       # timeout for VOD manager to get ready
+  transcode-timeout: 10   # timeout waiting for a segment to transcode
 
   # Use video keyframes as existing reference for chunks split
   # Using this might cause long probing times in order to get

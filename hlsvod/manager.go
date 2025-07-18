@@ -18,12 +18,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// how long can it take for transcode to be ready
-const readyTimeout = 80 * time.Second
-
-// how long can it take for transcode to return first data
-const transcodeTimeout = 10 * time.Second
-
 type ManagerCtx struct {
 	mu     sync.Mutex
 	logger zerolog.Logger
@@ -65,6 +59,12 @@ func New(config Config) *ManagerCtx {
 	}
 	if config.SegmentBufferMax == 0 {
 		config.SegmentBufferMax = 5
+	}
+	if config.ReadyTimeout == 0 {
+		config.ReadyTimeout = 80
+	}
+	if config.TranscodeTimeout == 0 {
+		config.TranscodeTimeout = 10
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ManagerCtx{
@@ -135,7 +135,7 @@ func (m *ManagerCtx) httpEnsureReady(w http.ResponseWriter) bool {
 			m.logger.Warn().Msg("manager load failed because of shutdown")
 			http.Error(w, "500 manager not available", http.StatusInternalServerError)
 			return false
-		case <-time.After(readyTimeout):
+		case <-time.After(time.Duration(m.config.ReadyTimeout) * time.Second):
 			m.logger.Warn().Msg("manager load timeouted")
 			http.Error(w, "504 manager timeout", http.StatusGatewayTimeout)
 			return false
@@ -621,7 +621,7 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 			m.logger.Warn().Msg("media transcode failed because of shutdown")
 			http.Error(w, "500 media not available", http.StatusInternalServerError)
 			return
-		case <-time.After(transcodeTimeout):
+		case <-time.After(time.Duration(m.config.TranscodeTimeout) * time.Second):
 			m.logger.Warn().Msg("media transcode timeouted")
 			http.Error(w, "504 media timeout", http.StatusGatewayTimeout)
 			return

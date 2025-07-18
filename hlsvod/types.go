@@ -20,6 +20,9 @@ type Config struct {
 	SegmentBufferMin int
 	SegmentBufferMax int
 
+    ReadyTimeout     int
+    TranscodeTimeout int
+
 	Cache    bool
 	CacheDir string // If not empty, cache will folder will be used instead of media path
 
