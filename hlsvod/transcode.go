@@ -198,7 +198,7 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 	log.Info().
 		Str("command", ffmpegBinary).
 		Strs("args", args).
-		Msg("starting FFmpeg process")
+		Msg("transcode process spawned FFmpeg")
 
 	// Redirect stderr through our logger
 	logger := log.With().Str("module", "ffmpeg").Logger()
@@ -242,7 +242,7 @@ func TranscodeSegments(ctx context.Context, ffmpegBinary string, config Transcod
 		if err != nil {
 			log.Error().Err(err).Msg("FFmpeg process exited with error")
 		} else {
-			log.Info().Msg("FFmpeg process completed successfully")
+			log.Info().Msg("transcode process completed successfully")
 		}
 	}()
 

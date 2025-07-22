@@ -115,11 +115,14 @@ func (a *ApiManagerCtx) HlsVod(r chi.Router) {
 		ID := fmt.Sprintf("%s/%s", profileID, vodMediaPath)
 		manager, ok := hlsVodManagers[ID]
 
-		logger.Info().
-			Str("path", urlPath).
-			Str("hlsResource", hlsResource).
-			Str("vodMediaPath", vodMediaPath).
-			Msg("new hls vod request")
+		// Only log for new manager creation to reduce noise
+		if !ok {
+			logger.Info().
+				Str("path", urlPath).
+				Str("hlsResource", hlsResource).
+				Str("vodMediaPath", vodMediaPath).
+				Msg("new VOD session created")
+		}
 
 		// if manager was not found
 		if !ok {

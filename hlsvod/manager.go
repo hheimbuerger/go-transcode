@@ -641,17 +641,6 @@ func (m *ManagerCtx) ServePlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
-	// Log new request with cache status
-	cacheStatus := "miss"
-	if m.isSegmentTranscoded(0) { // Check if first segment is already transcoded as a proxy for cache status
-		cacheStatus = "hit"
-	}
-	m.logger.Info().
-		Str("method", r.Method).
-		Str("path", r.URL.Path).
-		Str("segment_cache", cacheStatus).
-		Msg("serving HLS media segment")
-
 	// ensure that manager started
 	if !m.httpEnsureReady(w) {
 		return
@@ -680,7 +669,9 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 
 	// try to transcode from current segment
 	if err := m.transcodeFromSegment(index); err != nil {
-		m.logger.Err(err).Int("index", index).Msg("unable to transcode media")
+		m.logger.Err(err).
+			Int("segment", index).
+			Msg("unable to transcode segment")
 		m.monitor.SetDownloadStatus(index, DownloadStatusError)
 		http.Error(w, "500 unable to transcode", http.StatusInternalServerError)
 		return
@@ -732,7 +723,7 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// return existing segment
+	// Set response headers for the segment
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
 
@@ -742,6 +733,7 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	// After ServeFile returns, the request's context tells us whether the client
 	// stayed connected. If the context is cancelled, we treat it as a download error.
 	if r.Context().Err() != nil {
+		m.logger.Warn().Err(r.Context().Err()).Msg("client disconnected while downloading segment")
 		m.monitor.SetDownloadStatus(index, DownloadStatusError)
 	} else {
 		m.monitor.SetDownloadStatus(index, DownloadStatusSent)
