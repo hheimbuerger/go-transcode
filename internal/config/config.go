@@ -225,39 +225,55 @@ func (s *Server) Set() {
 	//
 	// VOD
 	//
-	if err := viper.UnmarshalKey("vod", &s.Vod); err != nil {
-		panic(err)
+	// Unmarshal the VOD section from the config file
+	if viper.IsSet("vod") {
+		if err := viper.UnmarshalKey("vod", &s.Vod); err != nil {
+			panic(err)
+		}
 	}
 
-	// segment parameters populated from viper
-	s.Vod.SegmentLength = viper.GetFloat64("vod.segment-length")
-	s.Vod.SegmentOffset = viper.GetFloat64("vod.segment-offset")
-	s.Vod.SegmentBufferMin = viper.GetInt("vod.segment-buffer-min")
-	s.Vod.SegmentBufferMax = viper.GetInt("vod.segment-buffer-max")
-    s.Vod.ReadyTimeout = viper.GetInt("vod.ready-timeout")
-    s.Vod.TranscodeTimeout = viper.GetInt("vod.transcode-timeout")
-
-	// defaults (HLS-VOD segment)
-
+	// Set default values for VOD settings if they're not set in the config file
 	if s.Vod.SegmentLength == 0 {
-		s.Vod.SegmentLength = 4
+		s.Vod.SegmentLength = viper.GetFloat64("vod.segment-length")
+		if s.Vod.SegmentLength == 0 {
+			s.Vod.SegmentLength = 4 // default value
+		}
 	}
+
 	if s.Vod.SegmentOffset == 0 {
-		s.Vod.SegmentOffset = 1
+		s.Vod.SegmentOffset = viper.GetFloat64("vod.segment-offset")
+		if s.Vod.SegmentOffset == 0 {
+			s.Vod.SegmentOffset = 1 // default value
+		}
 	}
+
 	if s.Vod.SegmentBufferMin == 0 {
-		s.Vod.SegmentBufferMin = 3
+		s.Vod.SegmentBufferMin = viper.GetInt("vod.segment-buffer-min")
+		if s.Vod.SegmentBufferMin == 0 {
+			s.Vod.SegmentBufferMin = 3 // default value
+		}
 	}
+
 	if s.Vod.SegmentBufferMax == 0 {
-		s.Vod.SegmentBufferMax = 5
+		s.Vod.SegmentBufferMax = viper.GetInt("vod.segment-buffer-max")
+		if s.Vod.SegmentBufferMax == 0 {
+			s.Vod.SegmentBufferMax = 5 // default value
+		}
 	}
 
 	if s.Vod.ReadyTimeout == 0 {
-        s.Vod.ReadyTimeout = 80
-    }
-    if s.Vod.TranscodeTimeout == 0 {
-        s.Vod.TranscodeTimeout = 10
-    }
+		s.Vod.ReadyTimeout = viper.GetInt("vod.ready-timeout")
+		if s.Vod.ReadyTimeout == 0 {
+			s.Vod.ReadyTimeout = 80 // default value
+		}
+	}
+
+	if s.Vod.TranscodeTimeout == 0 {
+		s.Vod.TranscodeTimeout = viper.GetInt("vod.transcode-timeout")
+		if s.Vod.TranscodeTimeout == 0 {
+			s.Vod.TranscodeTimeout = 10 // default value
+		}
+	}
 
 	if s.Vod.TranscodeDir == "" {
 		var err error

@@ -163,6 +163,9 @@ func (a *ApiManagerCtx) HlsVod(r chi.Router) {
 				SegmentBufferMin: a.config.Vod.SegmentBufferMin,
 				SegmentBufferMax: a.config.Vod.SegmentBufferMax,
 
+				ReadyTimeout:     a.config.Vod.ReadyTimeout,
+				TranscodeTimeout: a.config.Vod.TranscodeTimeout,
+
 				Cache:    a.config.Vod.Cache,
 				CacheDir: a.config.Vod.CacheDir,
 
