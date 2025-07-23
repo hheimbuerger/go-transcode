@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog"
@@ -29,8 +31,32 @@ func init() {
 		//////
 		// logs
 		//////
-		zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+		// Set custom time format with 24-hour clock and seconds
+		zerolog.TimeFieldFormat = time.RFC3339Nano
+		log.Logger = log.Output(zerolog.ConsoleWriter{
+			Out:     os.Stdout,
+			NoColor: false,
+			FormatLevel: func(i interface{}) string {
+				// Format: LEVEL (in uppercase)
+				return fmt.Sprintf(" %-5s", strings.ToUpper(i.(string)))
+			},
+			FormatMessage: func(i interface{}) string {
+				return fmt.Sprintf("%s", i)
+			},
+			FormatTimestamp: func(i interface{}) string {
+				// Parse the RFC3339Nano timestamp and format as [HH:MM:SS]
+				t, err := time.Parse(time.RFC3339Nano, i.(string))
+				if err != nil {
+					return "[--:--:--]"
+				}
+				return fmt.Sprintf("[%s]", t.Format("15:04:05"))
+			},
+			PartsOrder: []string{
+				zerolog.TimestampFieldName,
+				zerolog.LevelFieldName,
+				zerolog.MessageFieldName,
+			},
+		})
 
 		//////
 		// configs
