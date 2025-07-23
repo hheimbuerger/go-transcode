@@ -41,36 +41,86 @@ func (s SegmentStatus) String() string {
 	}
 }
 
-// SegmentStatusUpdate represents a change in segment status
-type SegmentStatusUpdate struct {
-	SegmentID int
-	OldStatus SegmentStatus
-	NewStatus SegmentStatus
+// DownloadStatus represents the current state of an HTTP segment request
+//
+// It is kept separate from SegmentStatus (which describes the *transcoding* pipeline)
+// so that subscribers can observe both flows in a single combined update.
+type DownloadStatus int
+
+const (
+	// DownloadStatusNone indicates the segment has never been requested yet
+	DownloadStatusNone DownloadStatus = iota
+	// DownloadStatusInFlight is set as soon as the HTTP handler parsed a segment request
+	DownloadStatusInFlight
+	// DownloadStatusSent is set right before the handler completes successfully
+	DownloadStatusSent
+	// DownloadStatusError marks a failed / aborted request
+	DownloadStatusError
+)
+
+// String returns a string representation of the DownloadStatus.
+func (d DownloadStatus) String() string {
+	switch d {
+	case DownloadStatusNone:
+		return "none"
+	case DownloadStatusInFlight:
+		return "in_flight"
+	case DownloadStatusSent:
+		return "sent"
+	case DownloadStatusError:
+		return "error"
+	default:
+		return fmt.Sprintf("DownloadStatus(%d)", d)
+	}
+}
+
+// StatusUpdate carries the latest *segment* and *download* status.
+// For batch transcoding updates, DownloadStatus is nil.
+// OldStatus is removed because consumers only need the fresh snapshot.
+type StatusUpdate struct {
+	SegmentIDs     []int           // list of segments affected; len==1 for single updates
+	SegmentStatus  SegmentStatus   // meaningful for transcode-related events
+	DownloadStatus *DownloadStatus // nil unless this update is about a single download
+}
+
+// Helper makeRange builds a slice [start, end).
+func makeRange(start, end int) []int {
+	if start >= end {
+		return nil
+	}
+	r := make([]int, end-start)
+	for i := range r {
+		r[i] = start + i
+	}
+	return r
 }
 
 // Monitor tracks the state of segments during transcoding
 type Monitor struct {
-	segmentStatus   map[int]SegmentStatus
-	segmentStatusMu sync.RWMutex
-	subscribers     []chan<- SegmentStatusUpdate
-	subscribersMu   sync.RWMutex
-	logger          zerolog.Logger
+	segmentStatus    map[int]SegmentStatus
+	downloadStatus   map[int]DownloadStatus
+	segmentStatusMu  sync.RWMutex
+	downloadStatusMu sync.RWMutex
+	subscribers      []chan<- StatusUpdate
+	subscribersMu    sync.RWMutex
+	logger           zerolog.Logger
 }
 
 // NewMonitor creates a new Monitor instance
 func NewMonitor(logger zerolog.Logger) *Monitor {
 	return &Monitor{
-		segmentStatus: make(map[int]SegmentStatus),
-		subscribers:   make([]chan<- SegmentStatusUpdate, 0),
-		logger:        logger,
+		segmentStatus:  make(map[int]SegmentStatus),
+		downloadStatus: make(map[int]DownloadStatus),
+		subscribers:    make([]chan<- StatusUpdate, 0),
+		logger:         logger,
 	}
 }
 
 // Subscribe creates a new subscription for segment status updates
 // The returned channel will receive updates when segment statuses change
 // The channel has a buffer size of 10 to prevent blocking
-func (m *Monitor) Subscribe() <-chan SegmentStatusUpdate {
-	ch := make(chan SegmentStatusUpdate, 10) // Buffer size of 10 as requested
+func (m *Monitor) Subscribe() <-chan StatusUpdate {
+	ch := make(chan StatusUpdate, 100)
 
 	m.subscribersMu.Lock()
 	m.subscribers = append(m.subscribers, ch)
@@ -80,21 +130,28 @@ func (m *Monitor) Subscribe() <-chan SegmentStatusUpdate {
 }
 
 // notifySubscribers sends updates to all subscribers
-func (m *Monitor) notifySubscribers(update SegmentStatusUpdate) {
+func (m *Monitor) notifySubscribers(update StatusUpdate) {
+	// avoid nil slices to prevent JSON null if marshalled
+	if update.SegmentIDs == nil {
+		update.SegmentIDs = []int{}
+	}
+
 	m.subscribersMu.RLock()
 	defer m.subscribersMu.RUnlock()
 
 	for _, sub := range m.subscribers {
 		select {
 		case sub <- update:
-			// Message sent successfully
 		default:
-			// Skip if subscriber's buffer is full
+			ds := ""
+			if update.DownloadStatus != nil {
+				ds = update.DownloadStatus.String()
+			}
 			m.logger.Warn().
-				Int("segment_id", update.SegmentID).
-				Str("old_status", update.OldStatus.String()).
-				Str("new_status", update.NewStatus.String()).
-				Msg("Dropped segment status update due to full buffer")
+				Ints("segment_ids", update.SegmentIDs).
+				Str("segment_status", update.SegmentStatus.String()).
+				Str("download_status", ds).
+				Msg("dropped status update due to full buffer")
 		}
 	}
 }
@@ -102,21 +159,20 @@ func (m *Monitor) notifySubscribers(update SegmentStatusUpdate) {
 // SetSegmentStatus updates the status of a single segment
 func (m *Monitor) SetSegmentStatus(index int, status SegmentStatus) {
 	m.segmentStatusMu.Lock()
-	oldStatus := m.segmentStatus[index]
-
-	if oldStatus != status {
-		m.segmentStatus[index] = status
+	current := m.segmentStatus[index]
+	if current == status {
 		m.segmentStatusMu.Unlock()
-
-		// Notify subscribers in a goroutine to avoid blocking
-		go m.notifySubscribers(SegmentStatusUpdate{
-			SegmentID: index,
-			OldStatus: oldStatus,
-			NewStatus: status,
-		})
-	} else {
-		m.segmentStatusMu.Unlock()
+		return
 	}
+	m.segmentStatus[index] = status
+	m.segmentStatusMu.Unlock()
+
+	// Notify subscribers in a goroutine to avoid blocking
+	go m.notifySubscribers(StatusUpdate{
+		SegmentIDs:     []int{index},
+		SegmentStatus:  status,
+		DownloadStatus: nil,
+	})
 }
 
 // SetSegmentStatusRange updates the status of a range of segments [start, end)
@@ -141,10 +197,10 @@ func (m *Monitor) SetSegmentStatusRange(start, end int, status SegmentStatus) {
 	// Send a single notification for the entire range if anything changed
 	if changed {
 		go func() {
-			m.notifySubscribers(SegmentStatusUpdate{
-				SegmentID: -1, // Indicates a range update
-				OldStatus: SegmentStatusNew, // Not meaningful for range updates
-				NewStatus: status,
+			m.notifySubscribers(StatusUpdate{
+				SegmentIDs:     makeRange(start, end),
+				SegmentStatus:  status,
+				DownloadStatus: nil,
 			})
 		}()
 	}
@@ -157,13 +213,35 @@ func (m *Monitor) GetSegmentStatus(index int) SegmentStatus {
 	return m.segmentStatus[index]
 }
 
+// GetDownloadStatus retrieves the download status of a segment
+func (m *Monitor) GetDownloadStatus(index int) DownloadStatus {
+	m.downloadStatusMu.RLock()
+	defer m.downloadStatusMu.RUnlock()
+	return m.downloadStatus[index]
+}
+
+// SetDownloadStatus updates the download status and notifies subscribers
+func (m *Monitor) SetDownloadStatus(index int, status DownloadStatus) {
+	m.downloadStatusMu.Lock()
+	m.downloadStatus[index] = status
+	m.downloadStatusMu.Unlock()
+
+	go m.notifySubscribers(StatusUpdate{
+		SegmentIDs:     []int{index},
+		SegmentStatus:  m.GetSegmentStatus(index),
+		DownloadStatus: &status,
+	})
+}
+
 // InitializeSegmentStatus initializes the status for all segments
 func (m *Monitor) InitializeSegmentStatus(total int) {
 	m.segmentStatusMu.Lock()
 	defer m.segmentStatusMu.Unlock()
 	m.segmentStatus = make(map[int]SegmentStatus, total)
+	m.downloadStatus = make(map[int]DownloadStatus, total)
 	for i := 0; i < total; i++ {
 		m.segmentStatus[i] = SegmentStatusNew
+		m.downloadStatus[i] = DownloadStatusNone
 	}
 }
 
@@ -186,11 +264,11 @@ func (m *Monitor) GetSegmentMap(totalSegments int) string {
 		case SegmentStatusTranscoding:
 			result += "▶"
 		case SegmentStatusQueued:
-			result += "•"
+			result += "□"
 		case SegmentStatusError:
 			result += "!"
 		default:
-			result += "–"
+			result += "·"
 		}
 	}
 	return result
@@ -216,6 +294,51 @@ func (m *Monitor) GetSegmentCounts(totalSegments int) (completed, inProgress, qu
 		}
 	}
 	return
+}
+
+// GetDownloadCounts returns the count of segments in each download state
+func (m *Monitor) GetDownloadCounts(total int) (sent, requested, errored, none int) {
+	m.downloadStatusMu.RLock()
+	defer m.downloadStatusMu.RUnlock()
+	for i := 0; i < total; i++ {
+		switch m.downloadStatus[i] {
+		case DownloadStatusSent:
+			sent++
+		case DownloadStatusInFlight:
+			requested++
+		case DownloadStatusError:
+			errored++
+		default:
+			none++
+		}
+	}
+	return
+}
+
+// GetDownloadMap returns a glyph bar representing download status for all segments.
+// Glyphs:
+//
+//	✓  sent
+//	▶  in flight
+//	!  error
+//	–  none/unrequested
+func (m *Monitor) GetDownloadMap(total int) string {
+	m.downloadStatusMu.RLock()
+	defer m.downloadStatusMu.RUnlock()
+	var result string
+	for i := 0; i < total; i++ {
+		switch m.downloadStatus[i] {
+		case DownloadStatusSent:
+			result += "✓"
+		case DownloadStatusInFlight:
+			result += "▶"
+		case DownloadStatusError:
+			result += "!"
+		default:
+			result += "–"
+		}
+	}
+	return result
 }
 
 // LogSegmentMap logs the current segment map with the given note

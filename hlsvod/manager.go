@@ -47,7 +47,7 @@ type ManagerCtx struct {
 	segmentQueueMu sync.RWMutex
 
 	monitor      *Monitor // tracks segment status during transcoding
-	monitorSub   <-chan SegmentStatusUpdate
+	monitorSub   <-chan StatusUpdate
 	monitorClose func()
 
 	ctx    context.Context
@@ -578,32 +578,36 @@ func (m *ManagerCtx) Start() (err error) {
 	return nil
 }
 
-// monitorSegments handles segment status updates and logs them when verbose is enabled
+// monitorSegments handles status updates coming from the Monitor and logs them.
+// Because the Monitor now aggregates batch updates itself, we can log every
+// incoming update directly – the volume is acceptable and much more accurate.
 func (m *ManagerCtx) monitorSegments() {
-	const logInterval = 2 * time.Second
-	lastLogTime := time.Now()
-
 	for update := range m.monitorSub {
-		now := time.Now()
+		// compute aggregate stats every time – cheap operations on maps
+		completed, inProgress, queued, errored, _ := m.monitor.GetSegmentCounts(len(m.breakpoints))
+		sent, requested, dlErrored, dlNone := m.monitor.GetDownloadCounts(len(m.breakpoints))
+		segmentMap := m.monitor.GetSegmentMap(len(m.breakpoints))
+		downloadMap := m.monitor.GetDownloadMap(len(m.breakpoints))
 
-		// Only log if verbose is enabled and enough time has passed or if there's an error
-		if now.Sub(lastLogTime) >= logInterval || update.NewStatus == SegmentStatusError {
-			completed, inProgress, queued, errored, _ := m.monitor.GetSegmentCounts(len(m.breakpoints))
-			segmentMap := m.monitor.GetSegmentMap(len(m.breakpoints))
+		evt := m.logger.Info().
+			Str("segments", segmentMap).
+			Int("done", completed).
+			Int("in_progress", inProgress).
+			Int("queued", queued).
+			Int("errored", errored).
+			Int("dl_sent", sent).
+			Int("dl_requested", requested).
+			Int("dl_errored", dlErrored).
+			Int("dl_none", dlNone).
+			Str("downloads", downloadMap).
+			Ints("segment_ids", update.SegmentIDs)
 
-			m.logger.Info().
-				Str("segments", segmentMap).
-				Int("done", completed).
-				Int("in_progress", inProgress).
-				Int("queued", queued).
-				Int("errored", errored).
-				Int("segment_id", update.SegmentID).
-				Str("old_status", update.OldStatus.String()).
-				Str("new_status", update.NewStatus.String()).
-				Msg("segment status updated")
-
-			lastLogTime = now
+		if update.DownloadStatus != nil {
+			evt.Str("download_status", update.DownloadStatus.String())
+		} else {
+			evt.Str("segment_status", update.SegmentStatus.String())
 		}
+		evt.Msg("status update")
 	}
 }
 
@@ -658,6 +662,9 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 
 	// getting index from segment name
 	index, ok := m.parseSegmentIndex(reqSegName)
+	if ok {
+		m.monitor.SetDownloadStatus(index, DownloadStatusInFlight)
+	}
 	if !ok {
 		http.Error(w, "400 bad media path", http.StatusBadRequest)
 		return
@@ -666,6 +673,7 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	// check if segment exists
 	segmentPath, ok := m.getSegment(index)
 	if !ok {
+		m.monitor.SetDownloadStatus(index, DownloadStatusError)
 		http.Error(w, "404 index not found", http.StatusNotFound)
 		return
 	}
@@ -673,6 +681,7 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	// try to transcode from current segment
 	if err := m.transcodeFromSegment(index); err != nil {
 		m.logger.Err(err).Int("index", index).Msg("unable to transcode media")
+		m.monitor.SetDownloadStatus(index, DownloadStatusError)
 		http.Error(w, "500 unable to transcode", http.StatusInternalServerError)
 		return
 	}
@@ -684,6 +693,7 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			// this should never happen
 			m.logger.Error().Int("index", index).Msg("media not queued even after transcode")
+			m.monitor.SetDownloadStatus(index, DownloadStatusError)
 			http.Error(w, "409 media not queued even after transcode", http.StatusConflict)
 			return
 		}
@@ -696,16 +706,19 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 			if !ok || segmentPath == "" {
 				// can happen if transcode failed
 				m.logger.Error().Int("index", index).Msg("segment not found even after transcoding")
+				m.monitor.SetDownloadStatus(index, DownloadStatusError)
 				http.Error(w, "409 segment not found even after transcoding", http.StatusConflict)
 				return
 			}
 		// when transcode stops before getting ready
 		case <-m.ctx.Done():
 			m.logger.Warn().Msg("media transcode failed because of shutdown")
+			m.monitor.SetDownloadStatus(index, DownloadStatusError)
 			http.Error(w, "500 media not available", http.StatusInternalServerError)
 			return
 		case <-time.After(time.Duration(m.config.TranscodeTimeout) * time.Second):
 			m.logger.Warn().Msg("media transcode timeouted")
+			m.monitor.SetDownloadStatus(index, DownloadStatusError)
 			http.Error(w, "504 media timeout", http.StatusGatewayTimeout)
 			return
 		}
@@ -714,6 +727,7 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	// check if segment is on the disk
 	if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
 		m.logger.Warn().Int("index", index).Str("path", segmentPath).Msg("media file not found")
+		m.monitor.SetDownloadStatus(index, DownloadStatusError)
 		http.Error(w, "404 media not found", http.StatusNotFound)
 		return
 	}
@@ -721,5 +735,15 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	// return existing segment
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
+
+	// stream the file; this call blocks until it finishes or the client aborts
 	http.ServeFile(w, r, segmentPath)
+
+	// After ServeFile returns, the request's context tells us whether the client
+	// stayed connected. If the context is cancelled, we treat it as a download error.
+	if r.Context().Err() != nil {
+		m.monitor.SetDownloadStatus(index, DownloadStatusError)
+	} else {
+		m.monitor.SetDownloadStatus(index, DownloadStatusSent)
+	}
 }
