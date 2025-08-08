@@ -476,6 +476,14 @@ func (m *ManagerCtx) transcodeSegments(offset, limit int) error {
 			// Mark current segment as completed
 			m.monitor.SetSegmentStatus(index, SegmentStatusCompleted)
 
+			// Ensure segment addition is visible before signaling completion
+			// This prevents race condition where getSegment() is called immediately
+			// after channel close but before the addSegment() write is visible
+			// Note: This empty critical section is intentional - it creates a memory
+			// barrier ensuring all writes to segmentsMu-protected data are visible
+			m.segmentsMu.RLock()
+			m.segmentsMu.RUnlock() //nolint:SA2001 // Intentional memory barrier
+
 			// notify and drop from queue, if exists
 			m.dequeueSegment(index)
 
@@ -695,11 +703,33 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 			// now segment should be available
 			segmentPath, ok = m.getSegment(index)
 			if !ok || segmentPath == "" {
-				// can happen if transcode failed
-				m.logger.Error().Int("index", index).Msg("segment not found even after transcoding")
-				m.monitor.SetDownloadStatus(index, DownloadStatusError)
-				http.Error(w, "409 segment not found even after transcoding", http.StatusConflict)
-				return
+				// CRITICAL INVARIANT VIOLATION: This should never happen!
+				// The transcoding channel was closed (signaling completion) but the
+				// segment is still not available. This indicates a serious bug.
+				m.segmentsMu.RLock()
+				segmentName, segmentExists := m.segments[index]
+				totalSegments := len(m.segments)
+				m.segmentsMu.RUnlock()
+
+				// Log critical error before crashing
+				m.logger.Fatal().
+					Str("segment_name", reqSegName).
+					Int("segment_index", index).
+					Int("total_segments", totalSegments).
+					Bool("segment_exists_in_map", segmentExists).
+					Str("segment_filename", segmentName).
+					Str("segment_path", segmentPath).
+					Str("reason", "segment_not_found_after_transcoding").
+					Str("client_ip", r.RemoteAddr).
+					Str("user_agent", r.UserAgent()).
+					Msg("FATAL: Segment not available after transcoding completion - system invariant violated")
+
+				// Crash immediately with detailed context
+				panic(fmt.Sprintf(
+					"CRITICAL INVARIANT VIOLATION: Segment %d (%s) not available after transcoding completion. "+
+						"This indicates a serious concurrency bug or memory corruption. "+
+						"segment_exists_in_map=%t segment_filename=%s segment_path=%s total_segments=%d",
+					index, reqSegName, segmentExists, segmentName, segmentPath, totalSegments))
 			}
 		// when transcode stops before getting ready
 		case <-m.ctx.Done():
@@ -713,6 +743,13 @@ func (m *ManagerCtx) ServeMedia(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "504 media timeout", http.StatusGatewayTimeout)
 			return
 		}
+	}
+
+	// Refresh segment path to handle race condition where segment was transcoded
+	// after initial getSegment() call but before file system check
+	if segmentPath == "" {
+		// Re-fetch segment path in case it was transcoded since initial call
+		segmentPath, _ = m.getSegment(index)
 	}
 
 	// check if segment is on the disk
