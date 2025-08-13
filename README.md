@@ -1,8 +1,8 @@
 # go-transcode HTTP on-demand transcoding API
 
 > [!IMPORTANT]
-> **Note: Custom Fork**  
-> This is a custom fork of go-transcode with the following enhancements:
+> **Note: Custom Fork for CrossStream**  
+> This is a custom fork of go-transcode for the [CrossStream](https://github.com/hheimbuerger/crossstream) project, with the following enhancements:
 > - 🧰 Logging & observability
 >   - Added a VOD transcoding and download monitor
 >   - Unified transcoding log messages and set a concise log formatter (time with seconds, no date)
@@ -18,10 +18,12 @@
 >   - Made FFmpeg video encoding settings configurable: encoder, preset, profile, level, and extra args
 >   - Allowed configuration of the VOD audio codec
 >   - Introduced filtergraph customization for video and audio profiles
+> 
+> The main branch here is `main-crossstream-fork`.
 >
-> **Warning:** This fork is only designed for VOD. The live stream features are untested and in fact, this fork's author doesn't even understand how they work and what they do. So assume that the part of the codebase has been broken.
+> **Warning:** This fork is only designed for VOD. The live stream features are untested and in fact, this fork's author doesn't even understand how they work and what they do. So just assume that part of the codebase to be broken.
 >
-> If you're looking for a thoroughly tested and well-maintained fork of go-transcode, by someone who clearly knows what they're doing, please stick to [go-transcode](https://github.com/m1k1o/go-transcode).
+> If you're looking for a thoroughly tested and well-maintained version of go-transcode, by someone who clearly knows what they're doing, please ignore this fork and stick to [go-transcode](https://github.com/m1k1o/go-transcode).
 
 On demand transcoding of live sources and static files (with seeking).
 
